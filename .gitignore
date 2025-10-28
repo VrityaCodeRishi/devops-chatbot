@@ -1,3 +1,5 @@
+cat > .gitignore << 'EOF'
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -8,6 +10,8 @@ env/
 ENV/
 .venv
 *.egg-info/
+pip-log.txt
+pip-delete-this-directory.txt
 
 # Processed data (can be regenerated)
 data/processed/
@@ -16,7 +20,7 @@ data/processed/
 # Keep raw data (small, source of truth)
 # data/raw/  <- Don't ignore this!
 
-# Models (large files)
+# Models (large files - use Git LFS or model registry)
 models/
 !models/.gitkeep
 
@@ -29,20 +33,30 @@ models/
 .idea/
 *.swp
 *.swo
+*.sublime-workspace
+*.sublime-project
 
 # OS
 .DS_Store
 Thumbs.db
 .Spotlight-V100
 .Trashes
+ehthumbs.db
+Desktop.ini
 
 # Logs
 logs/
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Environment
 .env
 .env.local
+.env.development.local
+.env.test.local
+.env.production.local
 
 # Training artifacts
 checkpoints/
@@ -53,8 +67,101 @@ wandb/
 .pytest_cache/
 .coverage
 htmlcov/
+coverage/
 
 # Build
 dist/
 build/
 *.egg
+
+# ===================================
+# React / Node.js / Frontend
+# ===================================
+
+# Dependencies
+frontend/node_modules/
+node_modules/
+/.pnp
+.pnp.js
+
+# Testing
+frontend/coverage/
+
+# Production build
+frontend/build/
+frontend/dist/
+
+# Misc
+.DS_Store
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+pnpm-debug.log*
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Optional stylelint cache
+.stylelintcache
+
+# Microbundle cache
+.rpt2_cache/
+.rts2_cache_cjs/
+.rts2_cache_es/
+.rts2_cache_umd/
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn
+.yarn-integrity
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# Next.js (if you switch to Next.js later)
+.next/
+out/
+
+# Nuxt.js (if you use Nuxt)
+.nuxt/
+dist/
+
+# Gatsby (if you use Gatsby)
+.cache/
+public/
+
+# Storybook
+storybook-static/
+
+# Temporary folders
+tmp/
+temp/
+frontend/package-lock.json
+frontend/yarn.lock

@@ -1,4 +1,4 @@
-# Production image with trained model
+# Base image without trained model - for initial build
 FROM node:18-alpine AS frontend-builder
 
 WORKDIR /app/frontend
@@ -10,7 +10,7 @@ RUN npm ci --only=production
 COPY frontend/ ./
 RUN npm run build
 
-# Python backend with model
+# Python backend
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -27,10 +27,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend code
 COPY src/ ./src/
 
-# IMPORTANT: These must exist when building this Dockerfile
-# They are created by the training job
-COPY data/processed/ ./data/processed/
-COPY models/ ./models/
+# Create placeholder directories for model and data
+RUN mkdir -p models/distilbert-devops-faq data/processed
 
 # Copy frontend build
 COPY --from=frontend-builder /app/frontend/build ./frontend/build
@@ -38,17 +36,13 @@ COPY --from=frontend-builder /app/frontend/build ./frontend/build
 # Create startup script
 RUN echo '#!/bin/bash\n\
 echo "🚀 Starting DevOps Chatbot..."\n\
-echo "📊 Model version: ${MODEL_VERSION:-unknown}"\n\
-uvicorn src.app:app --host 0.0.0.0 --port ${PORT:-8000}\n\
+echo "📊 Model status: Placeholder (will be replaced after training)"\n\
+# Serve a simple hello page until model is deployed\n\
+python -m http.server ${PORT:-8000}\n\
 ' > /app/start.sh && chmod +x /app/start.sh
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
-  CMD curl -f http://localhost:${PORT:-8000}/health || exit 1
 
 EXPOSE 8000
 
 ENV PYTHONUNBUFFERED=1
-ENV MODEL_PATH=models/distilbert-devops-faq
 
 CMD ["/app/start.sh"]

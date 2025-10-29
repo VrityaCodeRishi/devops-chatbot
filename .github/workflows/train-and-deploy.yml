@@ -1,13 +1,8 @@
-name: Build, Train (Manual), and Deploy
+name: Train and Deploy ML Model
 
 on:
   push:
     branches: [ main ]
-    paths:
-      - 'src/**'
-      - 'frontend/**'
-      - 'Dockerfile.base'
-      - 'requirements.txt'
   workflow_dispatch:
 
 env:
@@ -17,24 +12,16 @@ env:
   REGISTRY: us-central1-docker.pkg.dev
 
 jobs:
-  build-and-push:
-    name: Build and Push Base Image
+  build-base-image:
+    name: Build Base Docker Image
     runs-on: ubuntu-latest
     
     outputs:
-      image-tag: ${{ steps.image-info.outputs.tag }}
+      base-image: ${{ steps.image-info.outputs.base-image }}
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
-      
-      - name: Verify secrets
-        run: |
-          if [ -z "${{ secrets.GCP_PROJECT_ID }}" ] || [ -z "${{ secrets.GCP_SA_KEY }}" ]; then
-            echo "❌ Missing required secrets"
-            exit 1
-          fi
-          echo "✅ Secrets verified"
       
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v1
@@ -43,55 +30,53 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT_ID }}
           export_default_credentials: true
       
-      - name: Configure Docker for GCP
+      - name: Authenticate Docker to GCP Artifact Registry
         run: |
-          gcloud auth configure-docker ${{ env.REGISTRY }}
+          echo "🔐 Configuring Docker authentication..."
+          gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+          
+          # Alternative: Use access token
+          gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://${{ env.REGISTRY }}
+          
+          echo "✅ Docker authenticated"
       
       - name: Set image tags
         id: image-info
         run: |
-          IMAGE_TAG="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:base-${{ github.sha }}"
-          echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
-          echo "🏷️  Base image: $IMAGE_TAG"
+          BASE_IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:base-${{ github.sha }}"
+          echo "base-image=$BASE_IMAGE" >> $GITHUB_OUTPUT
+          echo "🏷️  Image: $BASE_IMAGE"
       
-      - name: Build base Docker image (without model)
+      - name: Build base image
         run: |
           echo "🐳 Building base image..."
-          docker build \
-            -t ${{ steps.image-info.outputs.tag }} \
-            -f Dockerfile.base \
-            .
+          docker build -t ${{ steps.image-info.outputs.base-image }} -f Dockerfile.base .
       
       - name: Push base image
         run: |
-          echo "📤 Pushing base image..."
-          docker push ${{ steps.image-info.outputs.tag }}
-          echo "✅ Base image pushed"
+          echo "📤 Pushing to Artifact Registry..."
+          docker push ${{ steps.image-info.outputs.base-image }}
+          echo "✅ Push complete"
       
-      - name: Create build summary
+      - name: Summary
         run: |
           cat >> $GITHUB_STEP_SUMMARY << EOF
           ## 🐳 Base Image Built
-          
-          **Image**: \`${{ steps.image-info.outputs.tag }}\`
-          **Status**: Ready for training
-          
-          ### ⏸️ Next Step: Manual Approval
-          
-          Approve below to train the model and deploy.
+          **Image**: \`${{ steps.image-info.outputs.base-image }}\`
           EOF
 
-  train-and-deploy:
-    name: Train Model and Deploy
-    needs: build-and-push
-    runs-on: self-hosted
-    timeout-minutes: 45
+  train-model:
+    name: Train Model on GPU
+    needs: build-base-image
+    runs-on: [self-hosted, gpu]
+    timeout-minutes: 30
     
     environment:
       name: production
     
-    env:
-      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+    outputs:
+      model-version: ${{ steps.version.outputs.version }}
+      accuracy: ${{ steps.metrics.outputs.accuracy }}
     
     steps:
       - name: Checkout code
@@ -102,15 +87,8 @@ jobs:
         with:
           python-version: '3.11'
       
-      - name: Cache pip packages
-        uses: actions/cache@v3
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-      
       - name: Install PyTorch with CUDA
         run: |
-          echo "📦 Installing PyTorch..."
           pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
       
       - name: Install dependencies
@@ -122,35 +100,14 @@ jobs:
           nvidia-smi
           python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}')"
       
-      - name: Prepare training data
+      - name: Prepare data
         run: |
-          echo "📊 Preparing data..."
           python src/data_preparation.py
-      
-      - name: Verify data was created
-        run: |
-          echo "📁 Checking data files..."
           ls -lh data/processed/
-          if [ ! -f "data/processed/train.json" ]; then
-            echo "❌ Training data not found"
-            exit 1
-          fi
-          echo "✅ Data files exist"
       
       - name: Train model
         run: |
-          echo "🏋️ Training model..."
           python src/train.py 2>&1 | tee training.log
-      
-      - name: Verify model was created
-        run: |
-          echo "📁 Checking model files..."
-          ls -lh models/distilbert-devops-faq/ || echo "❌ Model directory not found"
-          if [ ! -f "models/distilbert-devops-faq/config.json" ]; then
-            echo "❌ Model not created"
-            exit 1
-          fi
-          echo "✅ Model files exist"
       
       - name: Extract metrics
         id: metrics
@@ -158,55 +115,54 @@ jobs:
           ACCURACY=$(grep "Test Accuracy:" training.log | tail -1 | awk '{print $3}' || echo "0.96")
           echo "accuracy=$ACCURACY" >> $GITHUB_OUTPUT
       
-      - name: Create model version
+      - name: Create version
         id: version
         run: |
           VERSION=$(date +%Y%m%d_%H%M%S)
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "$VERSION" > models/VERSION.txt
       
-      - name: Install gcloud CLI
-        run: |
-          if command -v gcloud &> /dev/null; then
-            echo "✅ gcloud already installed"
-            exit 0
-          fi
-          
-          echo "📦 Installing gcloud..."
-          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
-          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
-          sudo apt-get update && sudo apt-get install -y google-cloud-cli
+      - name: Upload model
+        uses: actions/upload-artifact@v3
+        with:
+          name: trained-model-${{ steps.version.outputs.version }}
+          path: |
+            models/distilbert-devops-faq/
+            data/processed/
+          retention-days: 30
+
+  build-and-deploy:
+    name: Build and Deploy
+    needs: train-model
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
       
-      - name: Authenticate with GCP
-        run: |
-          echo '${{ secrets.GCP_SA_KEY }}' > ${HOME}/gcp-key.json
-          gcloud auth activate-service-account --key-file=${HOME}/gcp-key.json
-          gcloud config set project ${{ env.PROJECT_ID }}
-          gcloud auth configure-docker ${{ env.REGISTRY }}
+      - name: Download model
+        uses: actions/download-artifact@v3
+        with:
+          name: trained-model-${{ needs.train-model.outputs.model-version }}
+          path: ./
       
-      - name: Build production Docker image with trained model
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+      
+      - name: Authenticate Docker
         run: |
-          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:${{ steps.version.outputs.version }}"
-          IMAGE_LATEST="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:latest"
-          
-          echo "🐳 Building production image with trained model..."
-          
-          # Now models/ and data/processed/ exist, so this will work
-          docker build \
-            -t $IMAGE \
-            -t $IMAGE_LATEST \
-            -f Dockerfile.production \
-            --build-arg MODEL_VERSION=${{ steps.version.outputs.version }} \
-            .
-          
-          echo "📤 Pushing production images..."
+          gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://${{ env.REGISTRY }}
+      
+      - name: Build production image
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:latest"
+          docker build -t $IMAGE -f Dockerfile.production .
           docker push $IMAGE
-          docker push $IMAGE_LATEST
       
       - name: Deploy to Cloud Run
         run: |
-          echo "🚀 Deploying to Cloud Run..."
-          
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:latest \
             --platform managed \
@@ -214,46 +170,19 @@ jobs:
             --allow-unauthenticated \
             --memory 2Gi \
             --cpu 2 \
-            --timeout 300 \
-            --max-instances 10 \
-            --min-instances 0 \
             --port 8000 \
-            --set-env-vars MODEL_VERSION=${{ steps.version.outputs.version }},MODEL_ACCURACY=${{ steps.metrics.outputs.accuracy }}
+            --set-env-vars MODEL_VERSION=${{ needs.train-model.outputs.model-version }}
       
-      - name: Get service URL
+      - name: Get URL
         id: get-url
         run: |
           URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
-            --platform managed \
             --region ${{ env.REGION }} \
             --format 'value(status.url)')
           echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "✅ Deployed: $URL"
       
-      - name: Test deployment
+      - name: Test
         run: |
           sleep 15
           curl -f ${{ steps.get-url.outputs.url }}/health
-          echo "✅ Health check passed"
-      
-      - name: Cleanup
-        if: always()
-        run: |
-          rm -f ${HOME}/gcp-key.json
-      
-      - name: Create summary
-        run: |
-          cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## 🚀 Training & Deployment Complete!
-          
-          **Model Version**: \`${{ steps.version.outputs.version }}\`
-          **Accuracy**: ${{ steps.metrics.outputs.accuracy }}
-          **Service URL**: [${{ steps.get-url.outputs.url }}](${{ steps.get-url.outputs.url }})
-          
-          ### Test the Chatbot
-          \`\`\`bash
-          curl -X POST ${{ steps.get-url.outputs.url }}/predict \\
-            -H "Content-Type: application/json" \\
-            -d '{"question": "What is Kubernetes?"}'
-          \`\`\`
-          EOF
+          echo "✅ Deployed at: ${{ steps.get-url.outputs.url }}"

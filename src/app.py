@@ -8,7 +8,7 @@ from datetime import datetime
 import uvicorn
 import os
 from pathlib import Path
-from inference import DevOpsChatbot
+from src.inference import DevOpsChatbot
 
 # Initialize FastAPI app
 app = FastAPI(

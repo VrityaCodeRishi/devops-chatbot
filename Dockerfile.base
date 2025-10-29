@@ -14,7 +14,6 @@ COPY frontend/ ./
 # Build the React app
 RUN npm run build
 
-
 # Python backend
 FROM python:3.11-slim
 

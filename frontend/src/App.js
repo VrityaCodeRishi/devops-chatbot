@@ -6,7 +6,7 @@ import ChatInput from './components/ChatInput';
 import WelcomeScreen from './components/WelcomeScreen';
 import { AlertCircle } from 'lucide-react';
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
+const API_URL = process.env.REACT_APP_API_URL || '';
 
 function App() {
   const [messages, setMessages] = useState([]);
@@ -49,7 +49,7 @@ function App() {
       
       // Add error message
       const errorMessage = {
-        text: "Sorry, I couldn't process your request. Please make sure the backend server is running on http://localhost:8000",
+        text: "Sorry, I couldn't process your request. Please try again later.",
         isUser: false,
         confidence: 0
       };

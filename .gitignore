@@ -16,10 +16,7 @@ pip-delete-this-directory.txt
 data/processed/
 !data/processed/.gitkeep
 
-# Keep raw data (small, source of truth)
-# data/raw/  <- Don't ignore this!
-
-# Models (large files - use Git LFS or model registry)
+# Models (large files)
 models/
 !models/.gitkeep
 
@@ -86,21 +83,14 @@ node_modules/
 # Testing
 frontend/coverage/
 
-# Production build
+# Production build (ignore build output, not source)
 frontend/build/
 frontend/dist/
 
-# Misc
-.DS_Store
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
+# ❌ REMOVED: public/ - we need frontend/public/ source files!
+# ❌ REMOVED: frontend/package-lock.json - we need this!
 
 # Debug logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 lerna-debug.log*
 pnpm-debug.log*
 
@@ -108,7 +98,6 @@ pnpm-debug.log*
 .vscode/*
 !.vscode/extensions.json
 !.vscode/settings.json
-.idea
 *.suo
 *.ntvs*
 *.njsproj
@@ -144,27 +133,9 @@ pnpm-debug.log*
 .yarn/install-state.gz
 .pnp.*
 
-# Next.js (if you switch to Next.js later)
-.next/
-out/
-
-# Nuxt.js (if you use Nuxt)
-.nuxt/
-dist/
-
-# Gatsby (if you use Gatsby)
-.cache/
-public/
-
-# Storybook
-storybook-static/
-
 # Temporary folders
 tmp/
 temp/
-frontend/package-lock.json
-frontend/yarn.lock
-
 
 # Terraform local state
 terraform/.terraform/
@@ -179,9 +150,7 @@ terraform.tfvars
 *.tfvars
 !terraform/terraform.tfvars.example
 
-# Service account keys
+# Service account keys (but keep JSON configs)
 github-actions-key.json
-*.json
-!package.json
-!package-lock.json
-!tsconfig.json
+*-key.json
+gcp-*.json

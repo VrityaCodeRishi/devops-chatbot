@@ -164,3 +164,24 @@ tmp/
 temp/
 frontend/package-lock.json
 frontend/yarn.lock
+
+
+# Terraform local state
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfstate.backup
+terraform/tfplan
+terraform/crash.log
+terraform/crash.*.log
+terraform.tfvars
+*.tfvars
+!terraform/terraform.tfvars.example
+
+# Service account keys
+github-actions-key.json
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json

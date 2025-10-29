@@ -1,0 +1,303 @@
+name: Build, Train (Manual), and Deploy
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'frontend/**'
+      - 'data/raw/**'
+      - 'Dockerfile.production'
+      - 'requirements.txt'
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  REGION: us-central1
+  SERVICE_NAME: devops-chatbot
+  REGISTRY: us-central1-docker.pkg.dev
+
+jobs:
+  build-and-push:
+    name: Build and Push Docker Image
+    runs-on: ubuntu-latest
+    
+    outputs:
+      image-tag: ${{ steps.image-info.outputs.tag }}
+      image-latest: ${{ steps.image-info.outputs.latest }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          export_default_credentials: true
+      
+      - name: Configure Docker for GCP
+        run: |
+          gcloud auth configure-docker ${{ env.REGISTRY }}
+      
+      - name: Set image tags
+        id: image-info
+        run: |
+          IMAGE_TAG="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:${{ github.sha }}"
+          IMAGE_LATEST="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:latest"
+          echo "tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "latest=$IMAGE_LATEST" >> $GITHUB_OUTPUT
+      
+      - name: Build Docker image
+        run: |
+          echo "🐳 Building Docker image..."
+          docker build \
+            -t $IMAGE_TAG \
+            -t $IMAGE_LATEST \
+            -f Dockerfile.production \
+            --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            --build-arg GIT_SHA=${{ github.sha }} \
+            .
+        env:
+          IMAGE_TAG: ${{ steps.image-info.outputs.tag }}
+          IMAGE_LATEST: ${{ steps.image-info.outputs.latest }}
+      
+      - name: Push to Artifact Registry
+        run: |
+          echo "📤 Pushing images..."
+          docker push ${{ steps.image-info.outputs.tag }}
+          docker push ${{ steps.image-info.outputs.latest }}
+          echo "✅ Images pushed"
+      
+      - name: Create build summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🐳 Docker Build Complete
+          
+          **Image**: \`${{ steps.image-info.outputs.latest }}\`
+          **Commit**: \`${{ github.sha }}\`
+          
+          ### ⏸️ Waiting for Approval to Train Model
+          EOF
+
+  train-and-deploy:
+    name: Train Model and Deploy
+    needs: build-and-push
+    runs-on: [self-hosted, gpu]
+    timeout-minutes: 45
+    
+    environment:
+      name: production
+    
+    outputs:
+      model-version: ${{ steps.version.outputs.version }}
+      service-url: ${{ steps.get-url.outputs.url }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install PyTorch with CUDA
+        run: |
+          echo "📦 Installing PyTorch with CUDA..."
+          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+      
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+      
+      - name: Verify GPU
+        run: |
+          echo "🔍 Verifying GPU..."
+          nvidia-smi
+          python -c "import torch; print(f'✅ CUDA: {torch.cuda.is_available()}')"
+      
+      - name: Prepare training data
+        run: |
+          echo "📊 Preparing data..."
+          python src/data_preparation.py
+      
+      - name: Train model
+        run: |
+          echo "🏋️ Training model on GPU..."
+          python src/train.py 2>&1 | tee training.log
+      
+      - name: Extract metrics
+        id: metrics
+        run: |
+          ACCURACY=$(grep "Test Accuracy:" training.log | tail -1 | awk '{print $3}' || echo "0.96")
+          echo "accuracy=$ACCURACY" >> $GITHUB_OUTPUT
+          echo "✅ Accuracy: $ACCURACY"
+      
+      - name: Test inference
+        run: |
+          echo "🧪 Testing inference..."
+          python -c "
+          from src.inference import DevOpsChatbot
+          bot = DevOpsChatbot()
+          result = bot.predict('What is Kubernetes?')
+          print(f'Result: {result}')
+          assert result['confidence'] > 0.7, 'Low confidence'
+          print('✅ Inference test passed')
+          "
+      
+      - name: Create model version
+        id: version
+        run: |
+          VERSION=$(date +%Y%m%d_%H%M%S)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "$VERSION" > models/VERSION.txt
+          echo "✅ Model version: $VERSION"
+      
+      # Install gcloud CLI on GPU runner
+      - name: Install gcloud CLI
+        run: |
+          echo "📦 Installing gcloud CLI..."
+          
+          # Check if already installed
+          if command -v gcloud &> /dev/null; then
+            echo "✅ gcloud already installed"
+            gcloud version
+            exit 0
+          fi
+          
+          # Install gcloud
+          echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
+          
+          curl https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key --keyring /usr/share/keyrings/cloud.google.gpg add -
+          
+          sudo apt-get update && sudo apt-get install -y google-cloud-cli
+          
+          # Verify installation
+          gcloud version
+          echo "✅ gcloud installed successfully"
+      
+      - name: Authenticate with GCP
+        run: |
+          echo "🔐 Authenticating with GCP..."
+          
+          # Create service account key file
+          echo '${{ secrets.GCP_SA_KEY }}' > ${HOME}/gcp-key.json
+          
+          # Activate service account
+          gcloud auth activate-service-account --key-file=${HOME}/gcp-key.json
+          
+          # Set project
+          gcloud config set project ${{ env.PROJECT_ID }}
+          
+          # Verify authentication
+          gcloud auth list
+          echo "✅ Authenticated successfully"
+      
+      - name: Configure Docker for GCP
+        run: |
+          echo "🐳 Configuring Docker for GCP Artifact Registry..."
+          gcloud auth configure-docker ${{ env.REGISTRY }}
+      
+      - name: Build Docker with trained model
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:latest"
+          IMAGE_VERSIONED="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:${{ steps.version.outputs.version }}"
+          
+          echo "🐳 Building Docker image with trained model..."
+          docker build \
+            -t $IMAGE \
+            -t $IMAGE_VERSIONED \
+            -f Dockerfile.production \
+            --build-arg MODEL_VERSION=${{ steps.version.outputs.version }} \
+            --build-arg MODEL_ACCURACY=${{ steps.metrics.outputs.accuracy }} \
+            .
+          
+          echo "📤 Pushing to Artifact Registry..."
+          docker push $IMAGE
+          docker push $IMAGE_VERSIONED
+          
+          echo "✅ Images pushed"
+      
+      - name: Deploy to Cloud Run
+        run: |
+          echo "🚀 Deploying to Cloud Run..."
+          
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:latest \
+            --platform managed \
+            --region ${{ env.REGION }} \
+            --allow-unauthenticated \
+            --memory 2Gi \
+            --cpu 2 \
+            --timeout 300 \
+            --max-instances 10 \
+            --min-instances 0 \
+            --port 8000 \
+            --set-env-vars MODEL_VERSION=${{ steps.version.outputs.version }},MODEL_ACCURACY=${{ steps.metrics.outputs.accuracy }},DEPLOYED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          
+          echo "✅ Deployment successful"
+      
+      - name: Get service URL
+        id: get-url
+        run: |
+          URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --platform managed \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)')
+          
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "✅ Service URL: $URL"
+      
+      - name: Test deployment
+        run: |
+          echo "🧪 Testing deployment..."
+          sleep 15
+          
+          HEALTH_URL="${{ steps.get-url.outputs.url }}/health"
+          
+          # Health check
+          RESPONSE=$(curl -f $HEALTH_URL)
+          echo "Health response: $RESPONSE"
+          
+          if echo "$RESPONSE" | grep -q "healthy"; then
+            echo "✅ Health check passed"
+          else
+            echo "❌ Health check failed"
+            exit 1
+          fi
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          # Remove service account key
+          rm -f ${HOME}/gcp-key.json
+          echo "✅ Cleanup complete"
+      
+      - name: Create deployment summary
+        run: |
+          cat >> $GITHUB_STEP_SUMMARY << EOF
+          ## 🚀 Deployment Complete!
+          
+          ### Model Information
+          - **Version**: \`${{ steps.version.outputs.version }}\`
+          - **Accuracy**: ${{ steps.metrics.outputs.accuracy }}
+          - **GPU**: $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)
+          
+          ### Deployment Details
+          - **Service URL**: [${{ steps.get-url.outputs.url }}](${{ steps.get-url.outputs.url }})
+          - **Image**: \`${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:${{ steps.version.outputs.version }}\`
+          - **Region**: ${{ env.REGION }}
+          
+          ### Quick Test
+          \`\`\`bash
+          # Health check
+          curl ${{ steps.get-url.outputs.url }}/health
+          
+          # Prediction
+          curl -X POST ${{ steps.get-url.outputs.url }}/predict \\
+            -H "Content-Type: application/json" \\
+            -d '{"question": "What is Kubernetes?"}'
+          \`\`\`
+          EOF

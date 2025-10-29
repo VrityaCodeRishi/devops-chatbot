@@ -120,7 +120,7 @@ class DevOpsChatbotTrainer:
     
     def train(self, 
               output_dir='models/distilbert-devops-faq', 
-              epochs=5,
+              epochs=10,
               batch_size=8,
               learning_rate=2e-5):
         """Train the model"""

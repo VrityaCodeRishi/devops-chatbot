@@ -14,7 +14,6 @@ const WelcomeScreen = ({ onExampleClick }) => {
   const features = [
     { icon: Zap, title: "Fast Responses", desc: "<100ms inference time" },
     { icon: Shield, title: "96% Accuracy", desc: "Production-ready model" },
-    { icon: TrendingUp, title: "Always Learning", desc: "Continuous improvement" },
   ];
 
   return (

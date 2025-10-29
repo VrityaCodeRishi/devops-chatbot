@@ -4,13 +4,11 @@ WORKDIR /app/frontend
 
 COPY frontend/package*.json ./
 
-# Install dependencies (even if some versions are invalid)
 RUN npm install || true
 
-# Copy frontend source
+
 COPY frontend/ ./
 
-# Build
 RUN npm run build
 
 FROM python:3.11-slim
@@ -31,7 +29,7 @@ COPY models/ ./models/
 
 COPY --from=frontend-builder /app/frontend/build ./frontend/build
 
-RUN printf '#!/bin/bash\necho "🚀 DevOps Chatbot"\necho "📊 Model: ${MODEL_VERSION:-unknown}"\nuvicorn src.app:app --host 0.0.0.0 --port ${PORT:-8000}\n' > /app/start.sh && chmod +x /app/start.sh
+RUN printf '#!/bin/bash\necho "DevOps Chatbot"\necho "Model: ${MODEL_VERSION:-unknown}"\nuvicorn src.app:app --host 0.0.0.0 --port ${PORT:-8000}\n' > /app/start.sh && chmod +x /app/start.sh
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:${PORT:-8000}/health || exit 1

@@ -13,7 +13,6 @@ from pathlib import Path
 import numpy as np
 from sklearn.metrics import accuracy_score, f1_score, classification_report
 
-# Custom Dataset class
 class DevOpsDataset(Dataset):
     def __init__(self, texts, labels, tokenizer, max_length=128):
         self.texts = texts
@@ -48,7 +47,6 @@ class DevOpsChatbotTrainer:
         self.data_dir = data_dir
         self.tokenizer = DistilBertTokenizer.from_pretrained(model_name)
         
-        # Load label mapping
         with open(f'{data_dir}/label_map.json', 'r') as f:
             self.label_map = json.load(f)
         
@@ -57,9 +55,9 @@ class DevOpsChatbotTrainer:
         
         self.num_labels = len(self.label_map)
         
-        print(f"🤖 Initializing model: {model_name}")
-        print(f"📊 Number of intents: {self.num_labels}")
-        print(f"💡 Intents: {list(self.label_map.keys())}")
+        print(f"Initializing model: {model_name}")
+        print(f"Number of intents: {self.num_labels}")
+        print(f"Intents: {list(self.label_map.keys())}")
         
         self.model = DistilBertForSequenceClassification.from_pretrained(
             model_name,
@@ -67,10 +65,8 @@ class DevOpsChatbotTrainer:
         )
     
     def load_data(self):
-        """Load preprocessed datasets using pandas"""
-        print("\n📂 Loading datasets...")
-        
-        # Load JSON files with pandas
+        print("\nLoading datasets...")
+    
         train_df = pd.read_json(f'{self.data_dir}/train.json', lines=True)
         val_df = pd.read_json(f'{self.data_dir}/val.json', lines=True)
         test_df = pd.read_json(f'{self.data_dir}/test.json', lines=True)
@@ -79,8 +75,7 @@ class DevOpsChatbotTrainer:
         print(f"Validation samples: {len(val_df)}")
         print(f"Test samples: {len(test_df)}")
         
-        # Create datasets
-        print("\n🔤 Creating torch datasets...")
+        print("\nCreating torch datasets...")
         train_dataset = DevOpsDataset(
             train_df['text'].tolist(),
             train_df['label_id'].tolist(),
@@ -106,7 +101,6 @@ class DevOpsChatbotTrainer:
         }
     
     def compute_metrics(self, eval_pred):
-        """Compute evaluation metrics"""
         logits, labels = eval_pred
         predictions = np.argmax(logits, axis=-1)
         
@@ -123,21 +117,18 @@ class DevOpsChatbotTrainer:
               epochs=10,
               batch_size=8,
               learning_rate=2e-5):
-        """Train the model"""
         
-        # Check if GPU is available
+
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"\n🖥️  Device: {device}")
+        print(f"\n Device: {device}")
         if device == "cuda":
             print(f"   GPU: {torch.cuda.get_device_name(0)}")
         
-        # Load data
         datasets = self.load_data()
         
-        # Training arguments - FIXED for transformers 4.41.0+
         training_args = TrainingArguments(
             output_dir=output_dir,
-            eval_strategy='epoch',  # Changed from evaluation_strategy
+            eval_strategy='epoch',
             save_strategy='epoch',
             learning_rate=learning_rate,
             per_device_train_batch_size=batch_size,
@@ -155,7 +146,6 @@ class DevOpsChatbotTrainer:
             save_total_limit=2,
         )
         
-        # Initialize trainer
         trainer = Trainer(
             model=self.model,
             args=training_args,
@@ -165,35 +155,30 @@ class DevOpsChatbotTrainer:
             callbacks=[EarlyStoppingCallback(early_stopping_patience=3)]
         )
         
-        # Train
-        print("\n🚀 Starting training...")
+        print("\nStarting training...")
         print("=" * 60)
         train_result = trainer.train()
         
-        # Evaluate on test set
         print("\n" + "=" * 60)
-        print("📈 Evaluating on test set...")
+        print("Evaluating on test set...")
         test_results = trainer.evaluate(datasets['test'])
         
-        # Get detailed classification report
         predictions = trainer.predict(datasets['test'])
         pred_labels = np.argmax(predictions.predictions, axis=-1)
         true_labels = predictions.label_ids
-        
-        # Convert to intent names
+
         pred_intents = [self.id_to_label[i] for i in pred_labels]
         true_intents = [self.id_to_label[i] for i in true_labels]
         
-        print("\n📊 Detailed Classification Report:")
+        print("\nDetailed Classification Report:")
         print("=" * 60)
         print(classification_report(true_intents, pred_intents))
         
-        # Save model and tokenizer
-        print(f"\n💾 Saving model to {output_dir}...")
+
+        print(f"\nSaving model to {output_dir}...")
         trainer.save_model(output_dir)
         self.tokenizer.save_pretrained(output_dir)
         
-        # Save config
         config = {
             'model_name': self.model_name,
             'num_labels': self.num_labels,
@@ -208,9 +193,9 @@ class DevOpsChatbotTrainer:
             json.dump(config, f, indent=2)
         
         print("\n" + "=" * 60)
-        print("✅ Training complete!")
-        print(f"🎯 Test Accuracy: {test_results['eval_accuracy']:.4f}")
-        print(f"🎯 Test F1 Score: {test_results['eval_f1']:.4f}")
+        print("Training complete!")
+        print(f"Test Accuracy: {test_results['eval_accuracy']:.4f}")
+        print(f"Test F1 Score: {test_results['eval_f1']:.4f}")
         print("=" * 60)
         
         return trainer, test_results

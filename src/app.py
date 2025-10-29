@@ -34,10 +34,10 @@ MODEL_VERSION = os.getenv("MODEL_VERSION", "unknown")
 async def load_model():
     global chatbot
     model_path = os.getenv("MODEL_PATH", "models/distilbert-devops-faq")
-    print(f"🤖 Loading model from: {model_path}")
-    print(f"📊 Model version: {MODEL_VERSION}")
+    print(f"Loading model from: {model_path}")
+    print(f"Model version: {MODEL_VERSION}")
     chatbot = DevOpsChatbot(model_path=model_path)
-    print("✅ Model loaded and ready!")
+    print("Model loaded and ready!")
 
 # Request/Response models
 class QuestionRequest(BaseModel):

@@ -24,8 +24,6 @@ class DevOpsChatbot:
         
         # NEW: Load context-aware answers
         self.context_answers = self._load_context_answers()
-        
-        print(f"✅ Model loaded on {self.device}")
     
     def _load_context_answers(self):
         """Load detailed context-specific answers"""

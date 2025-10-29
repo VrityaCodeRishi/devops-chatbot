@@ -26,21 +26,21 @@ jobs:
       - name: Verify secrets exist
         run: |
           if [ -z "${{ secrets.GCP_PROJECT_ID }}" ]; then
-            echo "❌ GCP_PROJECT_ID not set"
+            echo "GCP_PROJECT_ID not set"
             exit 1
           fi
           if [ -z "${{ secrets.GCP_SA_KEY }}" ]; then
-            echo "❌ GCP_SA_KEY not set"
+            echo "GCP_SA_KEY not set"
             exit 1
           fi
-          echo "✅ Secrets verified"
+          echo "Secrets verified"
       
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v1
       
       - name: Authenticate to GCP
         run: |
-          echo "🔐 Authenticating to GCP..."
+          echo "Authenticating to GCP..."
           
           # Create service account key file
           echo '${{ secrets.GCP_SA_KEY }}' > ${HOME}/gcp-key.json
@@ -57,11 +57,11 @@ jobs:
           echo "Active account:"
           gcloud auth list
           
-          echo "✅ GCP authenticated"
+          echo "GCP authenticated"
       
       - name: Configure Docker for Artifact Registry
         run: |
-          echo "🐳 Configuring Docker..."
+          echo "Configuring Docker..."
           
           # Method 1: Configure Docker credential helper
           gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
@@ -71,7 +71,7 @@ jobs:
             docker login -u oauth2accesstoken \
             --password-stdin https://${{ env.REGISTRY }}
           
-          echo "✅ Docker configured"
+          echo "Docker configured"
       
       - name: Cleanup credentials
         if: always()
@@ -83,32 +83,32 @@ jobs:
         run: |
           BASE_IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:base-${{ github.sha }}"
           echo "base-image=$BASE_IMAGE" >> $GITHUB_OUTPUT
-          echo "🏷️  Base image: $BASE_IMAGE"
+          echo "Base image: $BASE_IMAGE"
       
       - name: Build base image
         run: |
-          echo "🐳 Building base image..."
+          echo "Building base image..."
           docker build \
             -t ${{ steps.image-info.outputs.base-image }} \
             -f Dockerfile.base \
             .
-          echo "✅ Build complete"
+          echo "Build complete"
       
       - name: Push to Artifact Registry
         run: |
-          echo "📤 Pushing image..."
+          echo "Pushing image..."
           docker push ${{ steps.image-info.outputs.base-image }}
-          echo "✅ Push complete"
+          echo "Push complete"
       
       - name: Create summary
         run: |
           cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## 🐳 Base Image Built and Pushed
+          ## Base Image Built and Pushed
           
           **Image**: \`${{ steps.image-info.outputs.base-image }}\`
           **Commit**: \`${{ github.sha }}\`
           
-          ✅ Ready for model training
+          Ready for model training
           EOF
 
 
@@ -195,7 +195,7 @@ jobs:
       
       - name: Verify model files
         run: |
-          echo "📁 Checking model files..."
+          echo "Checking model files..."
           ls -lh models/distilbert-devops-faq/
           ls -lh data/processed/
       
@@ -204,7 +204,7 @@ jobs:
       
       - name: Authenticate to GCP
         run: |
-          echo "🔐 Authenticating..."
+          echo "Authenticating..."
           
           echo '${{ secrets.GCP_SA_KEY }}' > ${HOME}/gcp-key.json
           
@@ -214,7 +214,7 @@ jobs:
           
           gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
           
-          echo "✅ Authenticated"
+          echo "Authenticated"
       
       - name: Configure Docker
         run: |
@@ -233,7 +233,7 @@ jobs:
           IMAGE_VERSIONED="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:${{ needs.train-model.outputs.model-version }}"
           IMAGE_LATEST="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:latest"
           
-          echo "🐳 Building production image..."
+          echo "Building production image..."
           docker build \
             -t $IMAGE_VERSIONED \
             -t $IMAGE_LATEST \
@@ -241,14 +241,14 @@ jobs:
             --build-arg MODEL_VERSION=${{ needs.train-model.outputs.model-version }} \
             .
           
-          echo "📤 Pushing images..."
+          echo "Pushing images..."
           docker push $IMAGE_VERSIONED
           docker push $IMAGE_LATEST
-          echo "✅ Images pushed"
+          echo "Images pushed"
       
       - name: Deploy to Cloud Run
         run: |
-          echo "🚀 Deploying..."
+          echo "Deploying..."
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:latest \
             --platform managed \
@@ -266,10 +266,9 @@ jobs:
             --region ${{ env.REGION }} \
             --format 'value(status.url)')
           echo "url=$URL" >> $GITHUB_OUTPUT
-          echo "✅ Deployed: $URL"
+          echo "Deployed: $URL"
       
       - name: Test
         run: |
           sleep 15
           curl -f ${{ steps.get-url.outputs.url }}/health
-

@@ -115,7 +115,7 @@ jobs:
   train-model:
     name: Train Model on GPU
     needs: build-base-image
-    runs-on: [self-hosted, gpu]
+    runs-on: [self-hosted]
     timeout-minutes: 30
     
     environment:

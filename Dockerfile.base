@@ -1,13 +1,17 @@
-# Base image without trained model - for initial build
 FROM node:18-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 
-# Build React frontend
+# Copy package files
 COPY frontend/package*.json ./
-RUN npm ci --only=production
 
+# Install ALL dependencies (including dev dependencies needed for build)
+RUN npm install
+
+# Copy frontend source
 COPY frontend/ ./
+
+# Build the React app
 RUN npm run build
 
 # Python backend
@@ -15,7 +19,8 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies with non-interactive flag
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -27,18 +32,17 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy backend code
 COPY src/ ./src/
 
-# Create placeholder directories for model and data
+# Create placeholder directories
 RUN mkdir -p models/distilbert-devops-faq data/processed
 
-# Copy frontend build
+# Copy frontend build from builder stage
 COPY --from=frontend-builder /app/frontend/build ./frontend/build
 
 # Create startup script
 RUN echo '#!/bin/bash\n\
-echo "🚀 Starting DevOps Chatbot..."\n\
-echo "📊 Model status: Placeholder (will be replaced after training)"\n\
-# Serve a simple hello page until model is deployed\n\
-python -m http.server ${PORT:-8000}\n\
+echo "🚀 DevOps Chatbot - Base Image"\n\
+echo "⚠️  Model not trained yet. Waiting for training job..."\n\
+python -c "from http.server import HTTPServer, SimpleHTTPRequestHandler; HTTPServer((\"0.0.0.0\", int(__import__(\"os\").environ.get(\"PORT\", 8000))), SimpleHTTPRequestHandler).serve_forever()"\n\
 ' > /app/start.sh && chmod +x /app/start.sh
 
 EXPOSE 8000

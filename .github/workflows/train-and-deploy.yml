@@ -12,58 +12,100 @@ env:
   REGISTRY: us-central1-docker.pkg.dev
 
 jobs:
-  build-base-image:
-    name: Build Base Docker Image
+  build-and-deploy:
+    name: Build and Deploy
+    needs: train-model
     runs-on: ubuntu-latest
-    
-    outputs:
-      base-image: ${{ steps.image-info.outputs.base-image }}
     
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
       
+      - name: Download trained model
+        uses: actions/download-artifact@v3
+        with:
+          name: trained-model-${{ needs.train-model.outputs.model-version }}
+          path: ./
+      
+      - name: Verify model files
+        run: |
+          echo "📁 Checking model files..."
+          ls -lh models/distilbert-devops-faq/
+          ls -lh data/processed/
+      
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v1
-        with:
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
-          export_default_credentials: true
       
-      - name: Authenticate Docker to GCP Artifact Registry
+      - name: Authenticate to GCP
         run: |
-          echo "🔐 Configuring Docker authentication..."
+          echo "🔐 Authenticating..."
+          
+          echo '${{ secrets.GCP_SA_KEY }}' > ${HOME}/gcp-key.json
+          
+          gcloud auth activate-service-account \
+            --key-file=${HOME}/gcp-key.json \
+            --project=${{ secrets.GCP_PROJECT_ID }}
+          
+          gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
+          
+          echo "✅ Authenticated"
+      
+      - name: Configure Docker
+        run: |
           gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+          gcloud auth print-access-token | \
+            docker login -u oauth2accesstoken \
+            --password-stdin https://${{ env.REGISTRY }}
+      
+      - name: Cleanup credentials
+        if: always()
+        run: |
+          rm -f ${HOME}/gcp-key.json
+      
+      - name: Build production image
+        run: |
+          IMAGE_VERSIONED="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:${{ needs.train-model.outputs.model-version }}"
+          IMAGE_LATEST="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:latest"
           
-          # Alternative: Use access token
-          gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://${{ env.REGISTRY }}
+          echo "🐳 Building production image..."
+          docker build \
+            -t $IMAGE_VERSIONED \
+            -t $IMAGE_LATEST \
+            -f Dockerfile.production \
+            --build-arg MODEL_VERSION=${{ needs.train-model.outputs.model-version }} \
+            .
           
-          echo "✅ Docker authenticated"
+          echo "📤 Pushing images..."
+          docker push $IMAGE_VERSIONED
+          docker push $IMAGE_LATEST
+          echo "✅ Images pushed"
       
-      - name: Set image tags
-        id: image-info
+      - name: Deploy to Cloud Run
         run: |
-          BASE_IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:base-${{ github.sha }}"
-          echo "base-image=$BASE_IMAGE" >> $GITHUB_OUTPUT
-          echo "🏷️  Image: $BASE_IMAGE"
+          echo "🚀 Deploying..."
+          gcloud run deploy ${{ env.SERVICE_NAME }} \
+            --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:latest \
+            --platform managed \
+            --region ${{ env.REGION }} \
+            --allow-unauthenticated \
+            --memory 2Gi \
+            --cpu 2 \
+            --port 8000 \
+            --set-env-vars MODEL_VERSION=${{ needs.train-model.outputs.model-version }}
       
-      - name: Build base image
+      - name: Get URL
+        id: get-url
         run: |
-          echo "🐳 Building base image..."
-          docker build -t ${{ steps.image-info.outputs.base-image }} -f Dockerfile.base .
+          URL=$(gcloud run services describe ${{ env.SERVICE_NAME }} \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)')
+          echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "✅ Deployed: $URL"
       
-      - name: Push base image
+      - name: Test
         run: |
-          echo "📤 Pushing to Artifact Registry..."
-          docker push ${{ steps.image-info.outputs.base-image }}
-          echo "✅ Push complete"
-      
-      - name: Summary
-        run: |
-          cat >> $GITHUB_STEP_SUMMARY << EOF
-          ## 🐳 Base Image Built
-          **Image**: \`${{ steps.image-info.outputs.base-image }}\`
-          EOF
+          sleep 15
+          curl -f ${{ steps.get-url.outputs.url }}/health
 
   train-model:
     name: Train Model on GPU
@@ -139,30 +181,68 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       
-      - name: Download model
+      - name: Download trained model
         uses: actions/download-artifact@v3
         with:
           name: trained-model-${{ needs.train-model.outputs.model-version }}
           path: ./
       
+      - name: Verify model files
+        run: |
+          echo "📁 Checking model files..."
+          ls -lh models/distilbert-devops-faq/
+          ls -lh data/processed/
+      
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v1
-        with:
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          project_id: ${{ secrets.GCP_PROJECT_ID }}
       
-      - name: Authenticate Docker
+      - name: Authenticate to GCP
         run: |
-          gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin https://${{ env.REGISTRY }}
+          echo "🔐 Authenticating..."
+          
+          echo '${{ secrets.GCP_SA_KEY }}' > ${HOME}/gcp-key.json
+          
+          gcloud auth activate-service-account \
+            --key-file=${HOME}/gcp-key.json \
+            --project=${{ secrets.GCP_PROJECT_ID }}
+          
+          gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
+          
+          echo "✅ Authenticated"
+      
+      - name: Configure Docker
+        run: |
+          gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+          gcloud auth print-access-token | \
+            docker login -u oauth2accesstoken \
+            --password-stdin https://${{ env.REGISTRY }}
+      
+      - name: Cleanup credentials
+        if: always()
+        run: |
+          rm -f ${HOME}/gcp-key.json
       
       - name: Build production image
         run: |
-          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:latest"
-          docker build -t $IMAGE -f Dockerfile.production .
-          docker push $IMAGE
+          IMAGE_VERSIONED="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:${{ needs.train-model.outputs.model-version }}"
+          IMAGE_LATEST="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:latest"
+          
+          echo "🐳 Building production image..."
+          docker build \
+            -t $IMAGE_VERSIONED \
+            -t $IMAGE_LATEST \
+            -f Dockerfile.production \
+            --build-arg MODEL_VERSION=${{ needs.train-model.outputs.model-version }} \
+            .
+          
+          echo "📤 Pushing images..."
+          docker push $IMAGE_VERSIONED
+          docker push $IMAGE_LATEST
+          echo "✅ Images pushed"
       
       - name: Deploy to Cloud Run
         run: |
+          echo "🚀 Deploying..."
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image ${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/devops-chatbot/app:latest \
             --platform managed \
@@ -180,9 +260,10 @@ jobs:
             --region ${{ env.REGION }} \
             --format 'value(status.url)')
           echo "url=$URL" >> $GITHUB_OUTPUT
+          echo "✅ Deployed: $URL"
       
       - name: Test
         run: |
           sleep 15
           curl -f ${{ steps.get-url.outputs.url }}/health
-          echo "✅ Deployed at: ${{ steps.get-url.outputs.url }}"
+

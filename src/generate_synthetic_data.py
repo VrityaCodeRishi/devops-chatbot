@@ -1,33 +1,38 @@
 import os
 import json
 import yaml
-from pathlib import Path
 import random
+import requests
+import time
+import re
+from pathlib import Path
 
-GENERATION_PROMPT = """Generate 20 diverse questions that a DevOps engineer might ask about {intent_topic}.
+GENERATION_PROMPT = """Generate 25 diverse, high-quality questions that a DevOps engineer might ask about {intent_topic}.
 
 Intent: {intent_name}
 Topic: {intent_topic}
+
 Example questions:
 {example_questions}
 
 Requirements:
-- Questions should be natural and varied
+- Questions should be natural and varied (how people actually talk)
 - Include different phrasings (what, how, why, explain, tell me, etc.)
 - Mix beginner, intermediate, and advanced questions
-- Include comparisons and troubleshooting questions
-- Make them realistic for a DevOps context
+- Include comparisons, troubleshooting, and best practices
+- Make them realistic for real DevOps scenarios
+- Include practical "how-to" questions
+- Each question must end with "?"
 
-Generate 20 NEW questions (different from examples):"""
-
+Generate 25 NEW questions (different from examples):"""
 
 def generate_with_openai(intent_name, intent_topic, example_questions, num_questions=100):
-    """Generate questions using OpenAI API"""
     try:
         import openai
         
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
+            print("No OpenAI API key found")
             return []
         
         client = openai.OpenAI(api_key=api_key)
@@ -39,110 +44,266 @@ def generate_with_openai(intent_name, intent_topic, example_questions, num_quest
         )
         
         all_questions = []
-        batches = (num_questions + 19) // 20  # Generate in batches of 20
+        batches = (num_questions + 24) // 25
         
-        for _ in range(batches):
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are a DevOps training data generator."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.9,
-                max_tokens=800
-            )
+        for batch_num in range(batches):
+            print(f"Batch {batch_num + 1}/{batches} (GPT-4o)...", end='', flush=True)
             
-            generated_text = response.choices[0].message.content
-            questions = [q.strip('- ').strip() for q in generated_text.split('\n') 
-                        if q.strip() and any(c.isalpha() for c in q)]
-            
-            # Clean numbering
-            cleaned = []
-            for q in questions:
-                q = q.lstrip('0123456789.-) ').strip()
-                if q and len(q) > 10:
-                    cleaned.append(q)
-            
-            all_questions.extend(cleaned)
+            try:
+                response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=[
+                        {
+                            "role": "system", 
+                            "content": "You are a senior DevOps architect with 15+ years of experience. Generate realistic, high-quality training questions that DevOps engineers would actually ask. Focus on practical scenarios."
+                        },
+                        {
+                            "role": "user", 
+                            "content": prompt
+                        }
+                    ],
+                    temperature=0.85,
+                    max_tokens=1500,
+                    top_p=0.9,
+                )
+                
+                generated_text = response.choices[0].message.content
+                questions = [q.strip('- ').strip() for q in generated_text.split('\n') 
+                            if q.strip() and any(c.isalpha() for c in q)]
+                
+                cleaned = []
+                for q in questions:
+                    q = q.lstrip('0123456789.-) ').strip()
+                    if (q and 
+                        len(q) > 15 and 
+                        '?' in q and
+                        not q.startswith(('Question', 'Note', 'Example'))):
+                        cleaned.append(q)
+                
+                all_questions.extend(cleaned)
+                print(f" +{len(cleaned)}")
+                
+                time.sleep(1)
+                
+            except Exception as e:
+                print(f" Error: {e}")
+                continue
         
-        return all_questions[:num_questions]
+        unique_questions = list(set(all_questions))
+        print(f"Total unique from GPT-4o: {len(unique_questions)}")
+        return unique_questions[:num_questions]
         
     except ImportError:
-        print("⚠️  OpenAI not installed - using template generation only")
+        print("\nOpenAI not installed. Run: pip install openai")
         return []
     except Exception as e:
-        print(f"⚠️  OpenAI API error: {e}")
+        print(f"\nOpenAI API error: {e}")
         return []
 
-
-def generate_large_dataset_improved(target_samples=7000, use_openai=False):
-    """
-    Generate 7000 high-quality varied questions
-    """
-    print(f"🎯 Target: {target_samples} training samples")
-    print(f"   OpenAI API: {'Enabled' if use_openai and os.getenv('OPENAI_API_KEY') else 'Disabled'}")
+def scrape_stackoverflow_data(keywords, max_questions=300):
+    BASE_URL = "https://api.stackexchange.com/2.3/search/advanced"
+    all_questions = []
     
-    # Load base data
+    for tag in keywords[:3]:
+        tag_clean = tag.lower().replace(' ', '-')
+        print(f"      Fetching: {tag_clean}", end='')
+        
+        params = {
+            "order": "desc",
+            "sort": "votes",
+            "tagged": tag_clean,
+            "site": "stackoverflow",
+            "pagesize": 100,
+        }
+        
+        try:
+            response = requests.get(BASE_URL, params=params, timeout=10)
+            data = response.json()
+            
+            for item in data.get("items", [])[:100]:
+                title = item.get("title", "").strip()
+                if len(title) > 15 and '?' in title:
+                    all_questions.append(title)
+            
+            print(f" +{len([t for t in all_questions[-100:] if t])}")
+            time.sleep(0.5)
+        except Exception as e:
+            print(f" Error: {e}")
+    
+    return list(set(all_questions))[:max_questions]
+
+def paraphrase_question(question, variations=2):
+    paraphrases = [question]
+    
+    transforms = [
+        (r'^What is ', 'Can you explain '),
+        (r'^What is ', 'Tell me about '),
+        (r'^How do I ', 'How can I '),
+        (r'^How does (.+) work\?', r'Explain how \1 works'),
+        (r'\?$', ' please?'),
+    ]
+    
+    for old, new in transforms:
+        if len(paraphrases) >= variations + 1:
+            break
+        modified = re.sub(old, new, question, flags=re.IGNORECASE)
+        if modified != question:
+            paraphrases.append(modified)
+    
+    return paraphrases
+
+def score_question_quality(question):
+    score = 50
+    
+    if '?' in question:
+        score += 10
+    if any(w in question.lower() for w in ['what', 'how', 'why']):
+        score += 10
+    if 10 < len(question.split()) < 25:
+        score += 10
+    if '{' in question or '}' in question:
+        score -= 50
+    if len(question) < 10:
+        score -= 30
+    
+    return max(0, min(100, score))
+
+def augment_with_variations(questions, rate=0.3):
+    augmented = list(questions)
+    
+    abbrevs = {
+        'kubernetes': 'k8s',
+        'continuous integration': 'CI',
+        'continuous deployment': 'CD',
+        'infrastructure as code': 'IaC',
+    }
+    
+    for question in list(questions)[:int(len(questions) * rate)]:
+        for full, abbrev in abbrevs.items():
+            if full in question.lower():
+                aug_q = re.sub(full, abbrev, question, flags=re.IGNORECASE)
+                if aug_q != question:
+                    augmented.append(aug_q)
+    
+    return augmented
+
+def validate_dataset(expanded_faqs):
+    issues = []
+    
+    for faq in expanded_faqs:
+        intent = faq['intent']
+        questions = faq['questions']
+        
+        if len(questions) != len(set(questions)):
+            issues.append(f"{intent}: Has duplicate questions")
+        
+        template_errors = [q for q in questions if '{' in q or '}' in q]
+        if template_errors:
+            issues.append(f"{intent}: {len(template_errors)} unfilled templates")
+        
+        short_questions = [q for q in questions if len(q) < 10]
+        if short_questions:
+            issues.append(f"{intent}: {len(short_questions)} questions too short")
+        
+        if not faq.get('answer'):
+            issues.append(f"{intent}: Missing answer")
+    
+    if issues:
+        print("\n  Dataset Issues Found:")
+        for issue in issues:
+            print(f"   - {issue}")
+    else:
+        print("\n Dataset validation passed!")
+    
+    return len(issues) == 0
+
+def generate_large_dataset_improved(
+    target_samples=15000,
+    use_openai=True,
+    use_stackoverflow=True
+):
+    
+    print(f"Target: {target_samples} samples")
+    print(f"   OpenAI GPT-4o: {'OpenAI model used' if use_openai and os.getenv('OPENAI_API_KEY') else ''}")
+    print(f"   Stack Overflow: {'Stackoverflow used' if use_stackoverflow else ''}")
+    
+    if use_openai and os.getenv('OPENAI_API_KEY'):
+        print(f"Estimated cost: $2-3 (one-time investment for best quality)")
+    
     with open('data/raw/devops_faqs.yaml', 'r') as f:
         faqs = yaml.safe_load(f)['faqs']
     
-    num_intents = len(faqs)
-    samples_per_intent = target_samples // num_intents
+    samples_per_intent = target_samples // len(faqs)
     
-    print(f"\n📊 Dataset composition:")
-    print(f"   Intents: {num_intents}")
-    print(f"   Target samples per intent: {samples_per_intent}")
-    print(f"   Total: {samples_per_intent * num_intents} samples")
+    print(f"\n Configuration:")
+    print(f"   Intents: {len(faqs)}")
+    print(f"   Samples per intent: {samples_per_intent}")
     
-    # Enhanced templates with more variation
+    intent_keywords = {
+        'kubernetes_basics': [
+            'kubernetes', 'k8s', 'container-orchestration', 'pods', 'kubectl'
+        ],
+        'docker_basics': [
+            'docker', 'containers', 'dockerfile', 'docker-compose'
+        ],
+        'cicd_pipeline': [
+            'ci-cd', 'continuous-integration', 'jenkins', 'gitlab-ci', 'github-actions'
+        ],
+        'terraform_basics': [
+            'terraform', 'infrastructure-as-code', 'iac', 'hashicorp'
+        ],
+        'monitoring_logging': [
+            'monitoring', 'prometheus', 'grafana', 'logging', 'observability'
+        ],
+        'container_orchestration': [
+            'container-orchestration', 'kubernetes', 'docker-swarm', 'orchestration'
+        ],
+        'git_version_control': [
+            'git', 'github', 'version-control', 'gitlab'
+        ],
+        'linux_commands': [
+            'linux', 'bash', 'shell', 'unix', 'command-line'
+        ],
+        'cloud_platforms': [
+            'aws', 'azure', 'gcp', 'cloud-computing', 'amazon-web-services'
+        ],
+        'ansible_configuration': [
+            'ansible', 'configuration-management', 'automation', 'ansible-playbook'
+        ],
+    }
+    
     question_patterns = {
         'what_patterns': [
             "What is {topic}?",
             "What does {topic} do?",
             "What are {topic}?",
-            "What's {topic}?",
             "Can you explain what {topic} is?",
             "Tell me what {topic} means",
             "Define {topic}",
-            "What do you mean by {topic}?",
-            "{topic} definition",
-            "Meaning of {topic}",
+            "What exactly is {topic}?",
         ],
         'explain_patterns': [
             "Explain {topic}",
-            "Explain {topic} to me",
             "Can you explain {topic}?",
             "Help me understand {topic}",
-            "I need an explanation of {topic}",
-            "Please explain {topic}",
-            "{topic} explained",
-            "Break down {topic} for me",
             "Describe {topic}",
+            "Break down {topic}",
             "Give me an overview of {topic}",
         ],
         'how_patterns': [
             "How does {topic} work?",
             "How do I use {topic}?",
             "How to implement {topic}?",
-            "How can I leverage {topic}?",
-            "How should I use {topic}?",
-            "What's the way to use {topic}?",
-            "Show me how {topic} works",
             "How to get started with {topic}?",
-            "How do you set up {topic}?",
-            "What's the process for {topic}?",
+            "How to configure {topic}?",
+            "How should I use {topic}?",
         ],
         'why_patterns': [
             "Why use {topic}?",
             "Why is {topic} important?",
-            "Why should I use {topic}?",
-            "Why do we need {topic}?",
-            "What's the purpose of {topic}?",
             "What are the benefits of {topic}?",
-            "Why is {topic} popular?",
-            "What makes {topic} useful?",
-            "Advantages of {topic}",
             "Why choose {topic}?",
+            "What makes {topic} useful?",
         ],
         'learning_patterns': [
             "Learn {topic}",
@@ -150,127 +311,11 @@ def generate_large_dataset_improved(target_samples=7000, use_openai=False):
             "{topic} guide",
             "Getting started with {topic}",
             "{topic} for beginners",
-            "Introduction to {topic}",
-            "{topic} basics",
-            "{topic} fundamentals",
-            "{topic} overview",
-            "Understanding {topic}",
-            "{topic} 101",
-            "Beginner's guide to {topic}",
-        ],
-        'advanced_patterns': [
-            "Advanced {topic}",
-            "{topic} best practices",
-            "{topic} architecture",
-            "{topic} internals",
-            "{topic} deep dive",
-            "{topic} configuration",
-            "{topic} optimization",
-            "{topic} advanced concepts",
-            "Master {topic}",
-            "{topic} expert guide",
-            "{topic} in production",
-            "Enterprise {topic}",
         ],
         'comparison_patterns': [
             "{topic} vs alternatives",
             "Compare {topic}",
-            "{topic} comparison",
-            "Is {topic} better?",
             "Should I use {topic}?",
-            "{topic} pros and cons",
-            "When to use {topic}?",
-            "{topic} or alternatives?",
-            "Choosing {topic}",
-            "Why {topic} over others?",
-        ],
-        'troubleshooting_patterns': [
-            "Troubleshoot {topic}",
-            "Debug {topic}",
-            "Fix {topic} issues",
-            "Common {topic} problems",
-            "{topic} errors",
-            "Resolve {topic} issues",
-            "{topic} troubleshooting guide",
-            "How to fix {topic}?",
-            "{topic} common mistakes",
-            "Debugging {topic}",
-        ],
-        'practical_patterns': [
-            "Using {topic} in production",
-            "Real-world {topic}",
-            "{topic} use cases",
-            "Implementing {topic}",
-            "Deploy with {topic}",
-            "Integrate {topic}",
-            "{topic} implementation guide",
-            "How to deploy {topic}?",
-            "{topic} setup guide",
-            "Configure {topic}",
-        ],
-    }
-    
-    # Intent-specific keywords with more variations
-    intent_keywords = {
-        'kubernetes_basics': [
-            'Kubernetes', 'K8s', 'Kube', 'container orchestration', 'pods', 
-            'clusters', 'K8s cluster', 'Kubernetes deployment', 'K8s pods',
-            'Kubernetes services', 'container orchestration platform', 'Kubernetes architecture',
-            'Kubernetes ecosystem', 'cloud-native orchestration'
-        ],
-        'docker_basics': [
-            'Docker', 'containers', 'containerization', 'Docker images', 
-            'Docker Compose', 'Dockerfile', 'Docker Engine', 'containerized apps',
-            'Docker runtime', 'container technology', 'Docker containers',
-            'lightweight containers', 'application containers'
-        ],
-        'cicd_pipeline': [
-            'CI/CD', 'continuous integration', 'continuous deployment', 'CI/CD pipelines', 
-            'automation', 'build pipeline', 'deployment automation', 'continuous delivery',
-            'software delivery pipeline', 'DevOps pipeline', 'automated deployment',
-            'release pipeline', 'deployment pipeline', 'build automation'
-        ],
-        'terraform_basics': [
-            'Terraform', 'IaC', 'Infrastructure as Code', 'HCL', 'infrastructure provisioning',
-            'Terraform code', 'declarative infrastructure', 'cloud provisioning',
-            'Terraform modules', 'infrastructure automation', 'HashiCorp Terraform',
-            'Terraform configuration', 'infrastructure management'
-        ],
-        'monitoring_logging': [
-            'monitoring', 'observability', 'logs', 'metrics', 'alerts',
-            'application monitoring', 'log aggregation', 'system monitoring',
-            'Prometheus', 'Grafana', 'ELK stack', 'logging', 'APM',
-            'observability platform', 'monitoring tools', 'infrastructure monitoring'
-        ],
-        'container_orchestration': [
-            'container orchestration', 'orchestration', 'container management', 
-            'scheduling', 'scaling', 'orchestration platform', 'container scheduling',
-            'automated container management', 'container deployment automation',
-            'Docker Swarm', 'orchestration tools', 'container lifecycle'
-        ],
-        'git_version_control': [
-            'Git', 'version control', 'GitHub', 'GitLab', 'repositories',
-            'source control', 'Git workflow', 'branching', 'Git branches',
-            'version control system', 'distributed version control', 'code versioning',
-            'Git repository', 'VCS'
-        ],
-        'linux_commands': [
-            'Linux', 'Unix', 'shell', 'bash', 'command line', 'terminal',
-            'Linux commands', 'shell scripting', 'Linux administration',
-            'system administration', 'Linux CLI', 'command-line interface',
-            'Unix commands', 'bash scripting', 'Linux terminal'
-        ],
-        'cloud_platforms': [
-            'cloud', 'AWS', 'Azure', 'GCP', 'cloud computing', 'cloud providers',
-            'Amazon Web Services', 'Microsoft Azure', 'Google Cloud Platform',
-            'cloud services', 'cloud infrastructure', 'public cloud',
-            'cloud platforms', 'cloud solutions'
-        ],
-        'ansible_configuration': [
-            'Ansible', 'configuration management', 'playbooks', 'automation',
-            'Ansible automation', 'infrastructure automation', 'config management',
-            'Ansible playbooks', 'configuration automation', 'IT automation',
-            'provisioning automation', 'agentless automation'
         ],
     }
     
@@ -281,54 +326,61 @@ def generate_large_dataset_improved(target_samples=7000, use_openai=False):
         answer = faq['answer']
         keywords = intent_keywords.get(intent, [intent.replace('_', ' ')])
         
-        print(f"\n📝 Generating for: {intent}")
+        print(f"\n {intent} (target: {samples_per_intent})")
         
-        # Start with existing questions
         generated_questions = set(faq['questions'])
-        initial_count = len(generated_questions)
+        initial = len(generated_questions)
         
-        # Generate with OpenAI if available
+        if use_stackoverflow:
+            print(f"Stack Overflow:")
+            so_qs = scrape_stackoverflow_data(keywords, max_questions=400)
+            generated_questions.update(so_qs)
+            print(f"Total SO: {len(so_qs)} questions")
+        
+
         if use_openai and os.getenv('OPENAI_API_KEY'):
-            print(f"   🤖 Using OpenAI API...")
-            openai_questions = generate_with_openai(
-                intent, 
-                intent.replace('_', ' '), 
-                list(generated_questions)[:5],
-                num_questions=200  # Generate more for variety
-            )
-            generated_questions.update(openai_questions)
-            print(f"   ✅ OpenAI generated: {len(openai_questions)} questions")
+            print(f"GPT-4o generation:")
+            try:
+                openai_qs = generate_with_openai(
+                    intent, 
+                    intent.replace('_', ' '), 
+                    list(generated_questions)[:5], 
+                    400
+                )
+                generated_questions.update(openai_qs)
+                print(f"Total GPT-4o: {len(openai_qs)} questions")
+            except Exception as e:
+                print(f"Error: {e}")
         
-        # Template-based generation
+        print(f"    Templates: ", end='')
+        template_count = 0
         for pattern_group, patterns in question_patterns.items():
             for pattern in patterns:
-                # Shuffle keywords for variety
-                shuffled_keywords = random.sample(keywords, min(len(keywords), 5))
-                
-                for keyword in shuffled_keywords:
-                    question = pattern.format(topic=keyword)
-                    
-                    # Add variation with capitalization
-                    variations = [
-                        question,
-                        question.capitalize(),
-                    ]
-                    
-                    generated_questions.update(variations)
-                    
-                    if len(generated_questions) >= samples_per_intent * 1.5:
-                        break
-                
-                if len(generated_questions) >= samples_per_intent * 1.5:
-                    break
-            
-            if len(generated_questions) >= samples_per_intent * 1.5:
-                break
+                for keyword in keywords:
+                    keyword_readable = keyword.replace('-', ' ')
+                    question = pattern.format(topic=keyword_readable)
+                    generated_questions.add(question)
+                    generated_questions.add(question.capitalize())
+                    template_count += 2
+        print(f"+{template_count}")
         
-        # Shuffle and select target number
-        questions_list = list(generated_questions)
-        random.shuffle(questions_list)
-        final_questions = questions_list[:samples_per_intent]
+        print(f"Paraphrasing: ", end='')
+        base_questions = list(generated_questions)[:200]
+        para_count = 0
+        for q in base_questions:
+            paraphrases = paraphrase_question(q, variations=3)
+            para_count += len(paraphrases) - 1
+            generated_questions.update(paraphrases)
+        print(f"+{para_count}")
+        
+        generated_questions = set(augment_with_variations(list(generated_questions), rate=0.3))
+        
+
+        high_quality = [q for q in generated_questions 
+                       if score_question_quality(q) >= 50]
+        
+        random.shuffle(high_quality)
+        final_questions = high_quality[:samples_per_intent]
         
         expanded_faqs.append({
             'intent': intent,
@@ -336,34 +388,40 @@ def generate_large_dataset_improved(target_samples=7000, use_openai=False):
             'answer': answer
         })
         
-        print(f"   ✅ Total: {len(final_questions)} questions (started with {initial_count})")
+        print(f"Final: {len(final_questions)} questions")
     
-    # Save expanded dataset
     output_data = {'faqs': expanded_faqs}
-    
     output_file = 'data/raw/devops_faqs.yaml'
+    
+    Path('data/raw').mkdir(parents=True, exist_ok=True)
     with open(output_file, 'w') as f:
         yaml.dump(output_data, f, default_flow_style=False, allow_unicode=True)
     
-    total_questions = sum(len(faq['questions']) for faq in expanded_faqs)
-    print(f"\n✅ Generated {total_questions} questions!")
+    total = sum(len(faq['questions']) for faq in expanded_faqs)
+    print(f"\n Generated {total} high-quality questions with GPT-4o!")
     print(f"   Saved to: {output_file}")
     
-    print(f"\n📊 Breakdown by intent:")
+    validate_dataset(expanded_faqs)
+    
+    print(f"\n Breakdown by intent:")
     for faq in expanded_faqs:
         print(f"   {faq['intent']}: {len(faq['questions'])} questions")
     
-    print(f"\n🔄 Next steps:")
-    print(f"   1. Update data_preparation.py to use: {output_file}")
-    print(f"   2. Run: python src/data_preparation.py")
-    print(f"   3. Train: python src/train.py")
-    print(f"   4. Expected accuracy: 97-98% with {total_questions} samples")
-
+    return expanded_faqs
 
 if __name__ == "__main__":
-    use_openai = bool(os.getenv("OPENAI_API_KEY"))
+    has_openai = bool(os.getenv("OPENAI_API_KEY"))
+    
+    if not has_openai:
+        print("\n To use GPT-4o generation (recommended for best quality):")
+        print("   export OPENAI_API_KEY='sk-your-key-here'")
+        print("\n   Proceeding with Stack Overflow + Templates only...\n")
+    else:
+        print("\n OpenAI API key detected - using GPT-4o (latest model)")
+        print("   This will generate the highest quality training data\n")
     
     generate_large_dataset_improved(
-        target_samples=7000,
-        use_openai=use_openai
+        target_samples=15000,
+        use_openai=has_openai,
+        use_stackoverflow=True
     )

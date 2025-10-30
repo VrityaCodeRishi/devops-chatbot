@@ -5,16 +5,14 @@ from pathlib import Path
 
 class DevOpsChatbot:
     def __init__(self, model_path='models/distilbert-devops-faq'):
-        """Initialize chatbot with trained model"""
-        print(f"🤖 Loading model from {model_path}...")
+        print(f" Loading model from {model_path}...")
         
         self.model = DistilBertForSequenceClassification.from_pretrained(model_path)
         self.tokenizer = DistilBertTokenizer.from_pretrained(model_path)
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.model.to(self.device)
         self.model.eval()
-        
-        # Load mappings
+    
         data_dir = 'data/processed'
         with open(f'{data_dir}/id_to_label.json', 'r') as f:
             self.id_to_label = {int(k): v for k, v in json.load(f).items()}
@@ -22,11 +20,9 @@ class DevOpsChatbot:
         with open(f'{data_dir}/answer_map.json', 'r') as f:
             self.answer_map = json.load(f)
         
-        # NEW: Load context-aware answers
         self.context_answers = self._load_context_answers()
     
     def _load_context_answers(self):
-        """Load detailed context-specific answers"""
         return {
             'kubernetes_basics': {
                 'default': "Kubernetes is an open-source container orchestration platform that automates deployment, scaling, and management of containerized applications. It uses a master-worker architecture with pods as the smallest deployable units.",
@@ -89,7 +85,6 @@ class DevOpsChatbot:
         }
     
     def _get_contextual_answer(self, intent, question):
-        """Get context-aware answer based on question keywords"""
         question_lower = question.lower()
         
         if intent not in self.context_answers:
@@ -97,7 +92,6 @@ class DevOpsChatbot:
         
         intent_answers = self.context_answers[intent]
         
-        # Match question keywords to context
         keywords = {
             'manage': ['manage', 'managing', 'management'],
             'orchestrate': ['orchestrate', 'orchestration', 'orchestrating'],
@@ -127,19 +121,15 @@ class DevOpsChatbot:
             'scale': ['scale', 'scaling', 'at scale'],
         }
         
-        # Find matching context
         for context, context_keywords in keywords.items():
             if any(kw in question_lower for kw in context_keywords):
                 if context in intent_answers:
                     return intent_answers[context]
         
-        # Return default answer for intent
         return intent_answers.get('default', self.answer_map.get(intent))
     
     def predict(self, question, return_confidence=True):
-        """Predict intent and get context-aware answer for a question"""
-        
-        # Tokenize
+
         inputs = self.tokenizer(
             question,
             return_tensors='pt',
@@ -148,7 +138,6 @@ class DevOpsChatbot:
             max_length=128
         ).to(self.device)
         
-        # Predict
         with torch.no_grad():
             outputs = self.model(**inputs)
             logits = outputs.logits
@@ -156,10 +145,8 @@ class DevOpsChatbot:
             predicted_class = torch.argmax(probabilities, dim=-1).item()
             confidence = probabilities[0][predicted_class].item()
         
-        # Get intent
         intent = self.id_to_label[predicted_class]
         
-        # Get context-aware answer
         answer = self._get_contextual_answer(intent, question)
         
         result = {
@@ -175,9 +162,8 @@ class DevOpsChatbot:
             return answer
     
     def chat(self):
-        """Interactive chat mode"""
         print("\n" + "=" * 60)
-        print("🤖 DevOps Chatbot is ready!")
+        print("DevOps Chatbot is ready!")
         print("=" * 60)
         print("Ask me anything about DevOps (or 'quit' to exit)\n")
         
@@ -185,14 +171,14 @@ class DevOpsChatbot:
             question = input("You: ").strip()
             
             if question.lower() in ['quit', 'exit', 'q']:
-                print("\n👋 Goodbye!")
+                print("\n Goodbye!")
                 break
             
             if not question:
                 continue
             
             result = self.predict(question)
-            print(f"\n🤖 Bot: {result['answer']}")
+            print(f"\n Bot: {result['answer']}")
             print(f"   Intent: {result['intent']} (Confidence: {result['confidence']:.2%})\n")
 
 if __name__ == "__main__":

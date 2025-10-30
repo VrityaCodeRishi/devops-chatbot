@@ -10,23 +10,22 @@ import os
 from pathlib import Path
 from src.inference import DevOpsChatbot
 
-# Initialize FastAPI app
 app = FastAPI(
     title="DevOps Chatbot API",
     description="AI-powered DevOps assistant with 96%+ accuracy",
     version=os.getenv("MODEL_VERSION", "1.0.0")
 )
 
-# CORS middleware
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Load model at startup
+
 chatbot = None
 MODEL_VERSION = os.getenv("MODEL_VERSION", "unknown")
 
@@ -39,7 +38,7 @@ async def load_model():
     chatbot = DevOpsChatbot(model_path=model_path)
     print("Model loaded and ready!")
 
-# Request/Response models
+
 class QuestionRequest(BaseModel):
     question: str
     return_confidence: Optional[bool] = True
@@ -59,7 +58,6 @@ class PredictionResponse(BaseModel):
     confidence: float
     model_version: str
 
-# API Routes
 @app.get("/")
 async def root():
     """Root endpoint - redirect to frontend"""
@@ -67,7 +65,6 @@ async def root():
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint"""
     return {
         "status": "healthy",
         "model_loaded": chatbot is not None,
@@ -77,7 +74,6 @@ async def health_check():
 
 @app.post("/predict", response_model=PredictionResponse)
 async def predict(request: QuestionRequest):
-    """Get intent and answer for a question"""
     if not chatbot:
         raise HTTPException(status_code=503, detail="Model not loaded")
     
@@ -91,14 +87,12 @@ async def predict(request: QuestionRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
 
-# Serve React frontend static files
 frontend_path = Path("frontend/build")
 if frontend_path.exists():
     app.mount("/static", StaticFiles(directory="frontend/build/static"), name="static")
     
     @app.get("/{full_path:path}")
     async def serve_frontend(full_path: str):
-        """Serve React app for all other routes"""
         file_path = frontend_path / full_path
         if file_path.is_file():
             return FileResponse(file_path)

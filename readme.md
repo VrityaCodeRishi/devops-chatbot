@@ -431,6 +431,37 @@ devops-chatbot/
 
 ## Performance Metrics
 
+```
+Detailed Classification Report:
+============================================================
+                         precision    recall  f1-score   support
+  ansible_configuration       0.94      0.97      0.95       224
+          cicd_pipeline       0.97      0.95      0.96       225
+        cloud_platforms       0.95      0.96      0.96       216
+container_orchestration       0.98      0.93      0.96       130
+          docker_basics       0.94      0.95      0.94       219
+    git_version_control       1.00      0.99      1.00       225
+      kubernetes_basics       0.96      0.98      0.97       297
+         linux_commands       0.96      0.97      0.96       225
+     monitoring_logging       0.99      0.98      0.98       217
+       terraform_basics       0.98      0.95      0.96       216
+               accuracy                           0.97      2194
+              macro avg       0.97      0.96      0.96      2194
+           weighted avg       0.97      0.97      0.97      2194
+Saving model to models/distilbert-devops-faq...
+============================================================
+Training complete!
+Test Accuracy: 0.9654
+Test F1 Score: 0.9654
+============================================================
+```
+
 ---
 
+## Summary
+
+![Project flow](images/full-project-flow.png)
+
 ## Author
+
+Anubhav Mandarwal ([Anubhav Mandarwal](https://www.linkedin.com/in/anubhav-mandarwal/))

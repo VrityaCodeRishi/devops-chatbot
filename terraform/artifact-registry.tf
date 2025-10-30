@@ -1,4 +1,4 @@
-# Artifact Registry for Docker images
+
 resource "google_artifact_registry_repository" "docker_repo" {
   location      = var.artifact_registry_location
   repository_id = "devops-chatbot"
@@ -12,7 +12,6 @@ resource "google_artifact_registry_repository" "docker_repo" {
   ]
 }
 
-# IAM binding for GitHub Actions to push images
 resource "google_artifact_registry_repository_iam_member" "docker_repo_writer" {
   location   = google_artifact_registry_repository.docker_repo.location
   repository = google_artifact_registry_repository.docker_repo.name

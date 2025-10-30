@@ -8,7 +8,7 @@ locals {
   )
 }
 
-# Enable required GCP APIs
+
 resource "google_project_service" "required_apis" {
   for_each = toset([
     "run.googleapis.com",
@@ -22,7 +22,7 @@ resource "google_project_service" "required_apis" {
   disable_on_destroy = false
 }
 
-# Data source for project info
+
 data "google_project" "project" {
   project_id = var.project_id
 }

@@ -187,13 +187,12 @@ Then change the import in the app.py
 ```
 from src.inference import DevOpsChatbot 
 to
-from 
-inference import DevOpsChatbot 
+from inference import DevOpsChatbot 
 ```
 
 ---
 
-### Option 2: Hoiw Production Deployment is done through the pipeline
+### Option 2: How Production Deployment is done through the pipeline
 
 1. Deployed resources through terraform
 
@@ -204,7 +203,7 @@ terraform plan
 terraform apply
 ```
 
-2. Generate the data
+2. Generate the data <br>
 Set OPENAI_API_KEY to your key if you have a one so the data generation uses both stackoverflow scraping and the OPENAI to generate the dataset. This step needs to be done from your local machine and only once. Dataset needs to be committed in the repo. It will be generated at the path **data/raw/devops_faqs.yaml**.
 
 ```
